@@ -263,16 +263,9 @@ function App() {
         }),
       });
 
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as
-          | StatusResponse
-          | null;
-        throw new Error(data?.message ?? "Сервер не смог собрать архив.");
-      }
-
       const blob = await response.blob();
-      if (blob.size === 0) {
-        throw new Error("Сервер не вернул архив.");
+      if (!(await blobLooksLikeZip(blob))) {
+        throw new Error(await readServerMessage(blob, response.ok));
       }
 
       const url = URL.createObjectURL(blob);
@@ -530,6 +523,24 @@ function authHeaders(accessToken: string | undefined): HeadersInit {
     "Content-Type": "application/json",
     ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
   };
+}
+
+async function blobLooksLikeZip(blob: Blob): Promise<boolean> {
+  const header = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+  return header.length === 2 && header[0] === 0x50 && header[1] === 0x4b;
+}
+
+async function readServerMessage(blob: Blob, ok: boolean): Promise<string> {
+  try {
+    const data = JSON.parse(await blob.text()) as Partial<StatusResponse>;
+    if (typeof data.message === "string" && data.message.trim()) {
+      return data.message;
+    }
+  } catch {
+    // Тело ответа не JSON: пустой ответ или чужой формат.
+  }
+
+  return ok ? "Сервер не вернул архив." : "Сервер не смог собрать архив.";
 }
 
 function fileNameFromDisposition(
