@@ -7,9 +7,9 @@ const PLACEHOLDER = "СЮДА_Я_ВСТАВЛЮ";
 export type PaidTier = "premium" | "ultra" | "max";
 
 const PRICES: Record<PaidTier, { value: string; description: string }> = {
-  premium: { value: "200.00", description: "Premium: 15 генераций в неделю" },
-  ultra: { value: "400.00", description: "Ultra: 30 генераций в неделю" },
-  max: { value: "1000.00", description: "Максимум: безлимит генераций" },
+  premium: { value: "200.00", description: "Premium на 30 дней: 15 генераций в неделю" },
+  ultra: { value: "400.00", description: "Ultra на 30 дней: 30 генераций в неделю" },
+  max: { value: "1000.00", description: "Максимум на 30 дней: безлимит генераций" },
 };
 
 export class PaymentServiceError extends Error {
