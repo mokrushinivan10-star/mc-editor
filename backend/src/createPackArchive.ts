@@ -2,13 +2,29 @@ import { ZipArchive } from "archiver";
 import { PassThrough, type Writable } from "node:stream";
 import type { DownloadedMod } from "./services/curseforgeService.js";
 
-// Номера сборок загрузчиков — временная заглушка, пока нет каталога CurseForge.
-// Forge 47.3.0 существует только для Minecraft 1.20.1.
-// Fabric Loader 0.16.10 сам по себе не привязан к одной версии игры.
-const LOADER_VERSION = {
-  forge: "47.3.0",
-  fabric: "0.16.10",
-} as const;
+// Версия загрузчика должна совпадать с версией Minecraft, иначе
+// Prism Launcher пишет «Экземпляр имеет конфликтующие зависимости».
+const FORGE_VERSIONS: Record<string, string> = {
+  "1.12.2": "14.23.5.2860",
+  "1.16.5": "36.2.34",
+  "1.18.2": "40.2.0",
+  "1.19.2": "43.3.0",
+  "1.19.4": "45.2.0",
+  "1.20.1": "47.3.0",
+  "1.20.4": "49.1.0",
+  "1.21.1": "52.0.16",
+};
+
+const FABRIC_VERSIONS: Record<string, string> = {
+  "1.12.2": "0.16.10",
+  "1.16.5": "0.16.10",
+  "1.18.2": "0.16.10",
+  "1.19.2": "0.16.10",
+  "1.19.4": "0.16.10",
+  "1.20.1": "0.16.10",
+  "1.20.4": "0.16.10",
+  "1.21.1": "0.16.10",
+};
 
 const LOADER_UID = {
   forge: "net.minecraftforge",
@@ -16,6 +32,18 @@ const LOADER_UID = {
 } as const;
 
 export type ModLoader = keyof typeof LOADER_UID;
+
+export function loaderVersion(gameVersion: string, modLoader: ModLoader): string {
+  const table = modLoader === "forge" ? FORGE_VERSIONS : FABRIC_VERSIONS;
+  const version = table[gameVersion];
+  if (!version) {
+    const loaderName = modLoader === "forge" ? "Forge" : "Fabric";
+    throw new Error(
+      `Для Minecraft ${gameVersion} нет проверенной версии ${loaderName}. Выберите одну из: ${Object.keys(table).join(", ")}.`,
+    );
+  }
+  return version;
+}
 
 export type PackMod = {
   id: number;
@@ -235,6 +263,12 @@ function renderInstanceCfg(pack: PackRequest): string {
 }
 
 function renderMmcPack(pack: PackRequest): string {
+  const version = loaderVersion(pack.gameVersion, pack.modLoader);
+  const loaderName = pack.modLoader === "forge" ? "Forge" : "Fabric Loader";
+  console.log(
+    `Prism: Minecraft ${pack.gameVersion}, ${loaderName} ${version}`,
+  );
+
   const document = {
     formatVersion: 1,
     components: [
@@ -245,10 +279,10 @@ function renderMmcPack(pack: PackRequest): string {
         version: pack.gameVersion,
       },
       {
-        cachedName: pack.modLoader === "forge" ? "Forge" : "Fabric Loader",
+        cachedName: loaderName,
         important: true,
         uid: LOADER_UID[pack.modLoader],
-        version: LOADER_VERSION[pack.modLoader],
+        version,
       },
     ],
   };
