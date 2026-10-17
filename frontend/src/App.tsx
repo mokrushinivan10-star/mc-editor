@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./supabaseClient";
 
-const API_URL = "http://localhost:5000";
+const API_URL = "https://mc-editor.onrender.com";
 
 const fieldClass =
   "mt-2 w-full border-4 border-t-zinc-800 border-r-zinc-600 border-b-zinc-500 border-l-zinc-700 bg-black px-4 py-3 text-zinc-300 outline-none placeholder:text-zinc-500 focus:border-[#55FF55]";
