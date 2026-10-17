@@ -30,13 +30,6 @@ type ListResponse = {
   mods: GeneratedMod[];
 };
 
-type PackResponse = {
-  status: "ok" | "warning" | "error";
-  message: string | null;
-  fileName: string;
-  zipBase64: string;
-};
-
 function App() {
   const [message, setMessage] = useState("Запрашиваю бэкенд...");
   const [status, setStatus] = useState<string | null>(null);
@@ -277,23 +270,26 @@ function App() {
         throw new Error(data?.message ?? "Сервер не смог собрать архив.");
       }
 
-      const data = (await response.json()) as PackResponse;
-      if (!data.zipBase64) {
-        throw new Error(data.message ?? "Сервер не вернул архив.");
+      const blob = await response.blob();
+      if (blob.size === 0) {
+        throw new Error("Сервер не вернул архив.");
       }
 
-      const url = URL.createObjectURL(base64ToZip(data.zipBase64));
+      const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
       link.download = fileNameFromDisposition(
         response.headers.get("Content-Disposition"),
-        data.fileName || `${name.trim() || "modpack"}.zip`,
+        `${name.trim() || "modpack"}.zip`,
       );
       link.click();
       URL.revokeObjectURL(url);
       setBuildMessage("Архив собран и передан браузеру.");
-      if (data.status === "warning" && data.message) {
-        setBuildWarning(data.message);
+      if (response.headers.get("X-Pack-Status") === "warning") {
+        const encoded = response.headers.get("X-Pack-Message");
+        if (encoded) {
+          setBuildWarning(decodeURIComponent(encoded));
+        }
       }
     } catch (downloadError) {
       setBuildError(
@@ -550,15 +546,6 @@ function fileNameFromDisposition(
   } catch {
     return fallback;
   }
-}
-
-function base64ToZip(zipBase64: string): Blob {
-  const binary = atob(zipBase64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return new Blob([bytes], { type: "application/zip" });
 }
 
 export default App;

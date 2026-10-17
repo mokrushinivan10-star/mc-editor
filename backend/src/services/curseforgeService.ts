@@ -1,3 +1,8 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { pipeline } from "node:stream/promises";
 import axios, { type AxiosInstance } from "axios";
 import type { ModLoader } from "../createPackArchive.js";
 
@@ -30,7 +35,7 @@ export class CurseForgeError extends Error {
 export type DownloadedMod = {
   modId: number;
   fileName: string;
-  data: Buffer;
+  filePath: string;
 };
 
 export type MissingMod = {
@@ -153,10 +158,23 @@ export async function resolveAllDependencies(
   };
 }
 
+export function createModCacheDir(): string {
+  const dir = path.join(os.tmpdir(), "mc-mods", randomUUID());
+  fs.mkdirSync(dir, { recursive: true });
+  console.log(`CurseForge: временная папка для jar ${dir}`);
+  return dir;
+}
+
+export async function removeModCache(dir: string): Promise<void> {
+  await fs.promises.rm(dir, { recursive: true, force: true });
+  console.log(`CurseForge: временная папка удалена ${dir}`);
+}
+
 export async function downloadMods(
   modIds: number[],
   gameVersion: string,
   modLoader: ModLoader,
+  cacheDir: string,
 ): Promise<DownloadBatch> {
   const plan = await resolveAllDependencies(modIds, gameVersion, modLoader);
   const api = createApi();
@@ -171,12 +189,13 @@ export async function downloadMods(
   for (const item of plan.files) {
     try {
       const downloadUrl = await resolveDownloadUrl(api, item.modId, item.file);
-      const data = await downloadJar(downloadUrl);
       const fileName = uniqueJarName(item.file.fileName, item.modId, usedNames);
+      const filePath = path.join(cacheDir, fileName);
+      const bytes = await downloadJar(downloadUrl, filePath);
       console.log(
-        `CurseForge: мод ${item.modId} → ${fileName} (${data.length} байт)`,
+        `CurseForge: мод ${item.modId} → ${fileName} (${bytes} байт на диске)`,
       );
-      downloaded.push({ modId: item.modId, fileName, data });
+      downloaded.push({ modId: item.modId, fileName, filePath });
     } catch (error) {
       if (error instanceof CurseForgeError && error.kind === "fatal") {
         throw error;
@@ -407,15 +426,29 @@ async function resolveDownloadUrl(
   );
 }
 
-async function downloadJar(url: string): Promise<Buffer> {
-  const response = await axios.get<ArrayBuffer>(url, {
-    responseType: "arraybuffer",
+async function downloadJar(url: string, filePath: string): Promise<number> {
+  const response = await axios.get<NodeJS.ReadableStream>(url, {
+    responseType: "stream",
     timeout: 60_000,
-    maxContentLength: 80 * 1024 * 1024,
-    maxBodyLength: 80 * 1024 * 1024,
   });
 
-  return Buffer.from(response.data);
+  try {
+    await pipeline(response.data, fs.createWriteStream(filePath));
+  } catch (error) {
+    await fs.promises.rm(filePath, { force: true });
+    throw error;
+  }
+
+  const stat = await fs.promises.stat(filePath);
+  if (stat.size > 80 * 1024 * 1024) {
+    await fs.promises.rm(filePath, { force: true });
+    throw new CurseForgeError(
+      `Файл больше 80 МБ и не будет положен в сборку.`,
+      "missing",
+    );
+  }
+
+  return stat.size;
 }
 
 function uniqueJarName(

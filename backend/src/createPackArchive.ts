@@ -1,5 +1,5 @@
 import { ZipArchive } from "archiver";
-import { PassThrough, type Writable } from "node:stream";
+import type { Writable } from "node:stream";
 import type { DownloadedMod } from "./services/curseforgeService.js";
 
 // Версия загрузчика должна совпадать с версией Minecraft, иначе
@@ -297,33 +297,6 @@ export function zipFileName(name: string): string {
   return `${cleaned}.zip`;
 }
 
-export async function buildPackZip(
-  pack: PackRequest,
-  mods: DownloadedMod[],
-  warningText?: string,
-): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  const output = new PassThrough();
-  output.on("data", (chunk: Buffer | string) => {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  });
-
-  const finished = new Promise<void>((resolve, reject) => {
-    output.on("finish", () => resolve());
-    output.on("error", reject);
-  });
-
-  try {
-    await streamPackZip(output, pack, mods, warningText);
-    await finished;
-  } catch (error) {
-    output.destroy();
-    throw error;
-  }
-
-  return Buffer.concat(chunks);
-}
-
 export async function streamPackZip(
   output: Writable,
   pack: PackRequest,
@@ -344,7 +317,7 @@ export async function streamPackZip(
   archive.append(renderMmcPack(pack), { name: "mmc-pack.json" });
 
   for (const mod of mods) {
-    archive.append(mod.data, { name: `.minecraft/mods/${mod.fileName}` });
+    archive.file(mod.filePath, { name: `.minecraft/mods/${mod.fileName}` });
   }
 
   if (warningText) {

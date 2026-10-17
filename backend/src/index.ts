@@ -6,7 +6,7 @@ import express, {
   type Response,
 } from "express";
 import {
-  buildPackZip,
+  streamPackZip,
   parseAddModRequest,
   parseBuildRequest,
   parsePackRequest,
@@ -25,6 +25,8 @@ import {
 import {
   CurseForgeError,
   downloadMods,
+  createModCacheDir,
+  removeModCache,
   type DownloadedMod,
   type MissingMod,
 } from "./services/curseforgeService.js";
@@ -40,7 +42,9 @@ logSecret("SUPABASE_ANON_KEY", process.env.SUPABASE_ANON_KEY);
 
 // Фронтенд откроется на другом порту (обычно 5173).
 // Без этого разрешения браузер заблокирует ответ как «чужой».
-app.use(cors({ exposedHeaders: ["Content-Disposition"] }));
+app.use(cors({
+  exposedHeaders: ["Content-Disposition", "X-Pack-Status", "X-Pack-Message"],
+}));
 app.use(express.json());
 
 app.get("/api/status", (_req, res) => {
@@ -149,10 +153,26 @@ app.post("/api/build-pack", requireUser, async (req, res) => {
     `Собираю «${pack.name}» из ${mods.length} модов, которые оставил пользователь.`,
   );
 
+  const cacheDir = createModCacheDir();
+  let cacheRemoved = false;
+  const cleanupCache = () => {
+    if (cacheRemoved) {
+      return;
+    }
+    cacheRemoved = true;
+    void removeModCache(cacheDir).catch((error: unknown) => {
+      console.error(
+        "Не удалось удалить временные jar:",
+        error instanceof Error ? error.message : error,
+      );
+    });
+  };
+
   let collected;
   try {
-    collected = await collectJars(mods, pack);
+    collected = await collectJars(mods, pack, cacheDir);
   } catch (error) {
+    cleanupCache();
     console.error(
       "CurseForge не отдал моды:",
       error instanceof Error ? error.message : error,
@@ -169,10 +189,26 @@ app.post("/api/build-pack", requireUser, async (req, res) => {
   const loaderLabel = pack.modLoader === "forge" ? "Forge" : "Fabric";
   const warning =
     collected.replaced.length > 0 || collected.excluded.length > 0;
+  const warningMessage = warning
+    ? `Некоторые моды были заменены или пропущены из-за отсутствия версии под ${pack.gameVersion} ${loaderLabel}. Подробности внутри архива!`
+    : "";
 
-  let zip: Buffer;
+  res.setHeader("Content-Type", "application/zip");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+  );
+  res.setHeader("X-Pack-Status", warning ? "warning" : "ok");
+  if (warningMessage) {
+    res.setHeader("X-Pack-Message", encodeURIComponent(warningMessage));
+  }
+  res.on("finish", () => {
+    cleanupCache();
+  });
+
   try {
-    zip = await buildPackZip(
+    await streamPackZip(
+      res,
       pack,
       collected.jars,
       warning
@@ -180,14 +216,19 @@ app.post("/api/build-pack", requireUser, async (req, res) => {
         : undefined,
     );
   } catch (error) {
+    cleanupCache();
     console.error(
       "Не удалось собрать архив:",
       error instanceof Error ? error.message : error,
     );
-    res.status(502).json({
-      status: "error",
-      message: "Список модов получен, но архив собрать не удалось.",
-    });
+    if (!res.headersSent) {
+      res.status(502).json({
+        status: "error",
+        message: "Список модов получен, но архив собрать не удалось.",
+      });
+      return;
+    }
+    res.destroy();
     return;
   }
 
@@ -199,19 +240,6 @@ app.post("/api/build-pack", requireUser, async (req, res) => {
       error instanceof Error ? error.message : error,
     );
   }
-
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
-  );
-  res.json({
-    status: warning ? "warning" : "ok",
-    message: warning
-      ? `Некоторые моды были заменены или пропущены из-за отсутствия версии под ${pack.gameVersion} ${loaderLabel}. Подробности внутри архива!`
-      : null,
-    fileName,
-    zipBase64: zip.toString("base64"),
-  });
 });
 
 app.listen(PORT, () => {
@@ -221,11 +249,13 @@ app.listen(PORT, () => {
 async function collectJars(
   mods: SuggestedMod[],
   pack: { gameVersion: string; modLoader: ModLoader },
+  cacheDir: string,
 ): Promise<{ jars: DownloadedMod[]; replaced: string[]; excluded: string[] }> {
   const first = await downloadMods(
     mods.map((mod) => mod.id),
     pack.gameVersion,
     pack.modLoader,
+    cacheDir,
   );
   const jars = [...first.downloaded];
   const replaced: string[] = [];
@@ -276,6 +306,7 @@ async function collectJars(
       pendingIds,
       pack.gameVersion,
       pack.modLoader,
+      cacheDir,
     );
     secondDownloaded.push(...second.downloaded);
     secondMissing.push(...second.missingMods);
