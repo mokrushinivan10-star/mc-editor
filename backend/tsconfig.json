@@ -1,0 +1,24 @@
+{
+  // Этот файл создаёт команда `tsc --init`.
+  // Здесь мы говорим компилятору TypeScript, во что превращать наш код.
+  "compilerOptions": {
+    // Куда смотреть и куда класть результат сборки.
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    // Node.js читает современный JavaScript-модуль (import/export).
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "esnext",
+    "types": ["node"],
+
+    "sourceMap": true,
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["src"]
+}

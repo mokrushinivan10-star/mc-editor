@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@theme {
+  --font-pixel: "Pixelify Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: #18181b;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
