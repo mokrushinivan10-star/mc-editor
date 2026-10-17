@@ -2,9 +2,12 @@ import http from "node:http";
 import https from "node:https";
 import axios from "axios";
 import type { ModLoader } from "../createPackArchive.js";
+import { lookupModName } from "./curseforgeService.js";
 
 const GPTUNNEL_URL = "https://gptunnel.ru/v1/chat/completions";
 const MODEL = "claude-5.5-sonnet";
+// Sonar у GPTunnel ходит в веб перед ответом. Список модов по-прежнему пишет Claude.
+const SEARCH_MODEL = "sonar";
 
 // Свои агенты без proxyEnv и proxy: false не дают Node подставить системный прокси.
 const gptunnel = axios.create({
@@ -27,6 +30,9 @@ const SYSTEM_PROMPT = `Ты подбираешь моды Minecraft с CurseForg
 
 Для крупных модов сразу включай известные тебе обязательные библиотеки и ядра, чтобы игра не падала с Error loading mods. Applied Energistics 2 бери вместе с GuideME. Chipped бери вместе с Athena и Resourceful Lib. Create, Twilight Forest и другие большие моды бери вместе с библиотеками, без которых они не запускаются. Если помнишь project id такой библиотеки, поставь её в массив mods рядом с самим модом.
 
+ВНИМАНИЕ: Ты обязан добавлять технические библиотеки-ядра для ВСЕХ контентных модов. Например, если в сборке есть Croptopia — ты ОБЯЗАН добавить epherolib. Если есть Twilight Forest — добавь либы-зависимости. Если есть AE2 — добавь appeng-core/guideme. Проверяй соответствие версий!
+Проверенные project id: Croptopia 415438 требует EpheroLib 885449. Applied Energistics 2 223794 требует GuideME 1173950. Chipped 456956 требует Athena 841890 и Resourceful Lib 570073.
+
 Ответ должен быть строго в формате JSON, без лишнего текста, но массив "mods" должен содержать полную, глубокую и играбельную сборку под заданную тематику.
 
 Каждый мод — объект с тремя полями:
@@ -35,7 +41,7 @@ const SYSTEM_PROMPT = `Ты подбираешь моды Minecraft с CurseForg
 - summary: одна короткая фраза по-русски, зачем мод в этой сборке.
 
 Пример формы ответа. В настоящей сборке объектов 20-25, здесь показаны только поля:
-{"mods":[{"id":238222,"name":"JEI","summary":"Удобный просмотр рецептов"},{"id":313424,"name":"Create","summary":"Механизмы, шестерни и поезда"}]}
+{"mods":[{"id":238222,"name":"JEI","summary":"Удобный просмотр рецептов"},{"id":328085,"name":"Create","summary":"Механизмы, шестерни и поезда"},{"id":415438,"name":"Croptopia","summary":"Новые культуры"},{"id":885449,"name":"EpheroLib","summary":"Библиотека, без которой Croptopia не запускается"}]}
 
 Правила:
 - Верни от 20 до 25 модов включительно.
@@ -65,13 +71,13 @@ type PackPrompt = {
 };
 
 type GptunnelChatBody = {
-  model: typeof MODEL;
+  model: string;
   temperature: number;
   max_tokens: number;
   // Claude 5.5 думает до ответа и тратит на это тот же лимит токенов.
   // none оставляет лимит самому JSON, иначе поле content приходит пустым.
-  reasoning_effort: "none";
-  response_format: { type: "json_object" };
+  reasoning_effort?: "none";
+  response_format?: { type: "json_object" };
   useWalletBalance: true;
   messages: Array<{ role: "system" | "user"; content: string }>;
 };
@@ -140,7 +146,8 @@ export async function suggestMods(pack: PackPrompt): Promise<SuggestedMod[]> {
   }
 
   try {
-    return parseSuggestedMods(content);
+    const mods = parseSuggestedMods(content);
+    return await attachSearchedLibraries(mods, pack);
   } catch (error) {
     console.error("Ответ модели не прошёл проверку JSON:", content.slice(0, 500));
     throw new AiServiceError(
@@ -165,7 +172,8 @@ const ADD_MOD_SYSTEM_PROMPT = `Ты добавляешь один мод Minecra
 - summary — одна короткая фраза по-русски, зачем мод нужен именно по запросу;
 - мод должен существовать для указанной версии Minecraft и точной версии загрузчика из запроса;
 - не предлагай мод, который есть только на другом лоадере: при Forge не бери Fabric-моды, при Fabric не бери Forge-моды;
-- не выдумывай id. Если не уверен в числе, выбери другой известный мод.`;
+- не выдумывай id. Если не уверен в числе, выбери другой известный мод.
+- Если это Croptopia, бери project id 415438: её библиотеку EpheroLib сервер добавит сам.`;
 
 export async function suggestOneMod(input: {
   prompt: string;
@@ -409,6 +417,128 @@ export function parseReplacements(raw: string): ReplacementMod[] {
 
     return { replacesId, id, name };
   });
+}
+
+const SEARCH_SYSTEM_PROMPT = `Ты проверяешь обязательные библиотеки модов Minecraft через веб-поиск.
+Для каждого мода из списка выполни поиск: "<имя мода> dependencies minecraft <версия> <загрузчик>".
+Ответ — один JSON и ничего больше:
+{"libraries":[{"id":885449,"name":"EpheroLib","forModId":415438}]}
+
+Правила:
+- id — project id библиотеки на CurseForge, не file id;
+- не повторяй моды, которые уже есть в списке;
+- не выдумывай id. Если поиск не показал project id, пропусти библиотеку;
+- библиотека должна существовать именно для указанной версии Minecraft и загрузчика.`;
+
+async function attachSearchedLibraries(
+  mods: SuggestedMod[],
+  pack: PackPrompt,
+): Promise<SuggestedMod[]> {
+  try {
+    const found = await searchLibraries(mods, pack);
+    const merged = [...mods];
+    const seen = new Set(mods.map((mod) => mod.id));
+
+    for (const library of found) {
+      if (seen.has(library.id)) {
+        continue;
+      }
+      const actualName = await lookupModName(library.id);
+      if (!actualName || !namesAgree(library.name, actualName)) {
+        console.log(
+          `Поиск: библиотека ${library.id} «${library.name}» не совпала с CurseForge «${actualName ?? "нет такой"}», пропускаю.`,
+        );
+        continue;
+      }
+      seen.add(library.id);
+      merged.push({
+        id: library.id,
+        name: actualName,
+        summary: "Обязательная библиотека, найденная поиском по зависимостям.",
+      });
+      console.log(
+        `Поиск: для мода ${library.forModId ?? "?"} добавляю ${library.id} ${actualName}.`,
+      );
+    }
+
+    return merged;
+  } catch (error) {
+    console.error(
+      "Поиск библиотек не удался, оставляю список модели:",
+      error instanceof Error ? error.message : error,
+    );
+    return mods;
+  }
+}
+
+async function searchLibraries(
+  mods: SuggestedMod[],
+  pack: PackPrompt,
+): Promise<Array<{ id: number; name: string; forModId?: number }>> {
+  const list = mods.map((mod) => `${mod.id} ${mod.name}`).join("\n");
+  console.log(
+    `GPTunnel: проверяю зависимости поиском, model=${SEARCH_MODEL}, модов=${mods.length}`,
+  );
+  const data = await postChat({
+    model: SEARCH_MODEL,
+    temperature: 0,
+    max_tokens: 1500,
+    useWalletBalance: true,
+    messages: [
+      { role: "system", content: SEARCH_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: [
+          `Версия Minecraft: ${pack.gameVersion}`,
+          `Загрузчик: ${pack.modLoader} ${pack.loaderVersion}`,
+          "Моды, для которых нужно найти библиотеки:",
+          list,
+        ].join("\n"),
+      },
+    ],
+  });
+  logUsage(data);
+  const content = readChoiceContent(data);
+  if (!content) {
+    return [];
+  }
+  return parseLibraries(content);
+}
+
+function parseLibraries(
+  content: string,
+): Array<{ id: number; name: string; forModId?: number }> {
+  const parsed = parseJsonObject(content) as { libraries?: unknown };
+  if (!Array.isArray(parsed.libraries)) {
+    return [];
+  }
+
+  const libraries = [];
+  for (const item of parsed.libraries) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+    const record = item as { id?: unknown; name?: unknown; forModId?: unknown };
+    if (typeof record.id !== "number" || !Number.isInteger(record.id) || record.id <= 0) {
+      continue;
+    }
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!name) {
+      continue;
+    }
+    const forModId =
+      typeof record.forModId === "number" && Number.isInteger(record.forModId)
+        ? record.forModId
+        : undefined;
+    libraries.push({ id: record.id, name, forModId });
+  }
+  return libraries;
+}
+
+function namesAgree(expected: string, actual: string): boolean {
+  const left = expected.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const right = actual.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return left.length >= 3 && (right.includes(left) || left.includes(right));
 }
 
 async function postChat(body: GptunnelChatBody): Promise<unknown> {

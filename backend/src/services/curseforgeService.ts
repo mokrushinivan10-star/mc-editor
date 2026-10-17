@@ -22,6 +22,14 @@ const LOADER_LABEL = {
 
 const REQUIRED_DEPENDENCY = 3;
 
+// CurseForge иногда отдаёт dependencies: []. Эти id проверены по карточкам модов.
+// 856414 — это не EpheroLib, а другой проект, поэтому здесь стоит настоящий 885449.
+const LIBRARY_FALLBACKS: Record<number, readonly number[]> = {
+  415438: [885449],
+  223794: [1173950],
+  456956: [841890, 570073],
+};
+
 export class CurseForgeError extends Error {
   readonly kind: "missing" | "fatal";
 
@@ -255,7 +263,31 @@ async function collectRequiredDependencyIds(
     ids.add(dependencyId);
   }
 
+  for (const fallbackId of LIBRARY_FALLBACKS[modId] ?? []) {
+    if (ids.has(fallbackId)) {
+      continue;
+    }
+    ids.add(fallbackId);
+    console.log(
+      `Локальная карта: для мода ${modId} добавляю библиотеку ${fallbackId}`,
+    );
+  }
+
   return [...ids];
+}
+
+export async function lookupModName(modId: number): Promise<string | null> {
+  try {
+    const api = createApi();
+    const response = await api.get<{ data?: { name?: string } }>(`/mods/${modId}`);
+    const name = response.data.data?.name?.trim();
+    return name || null;
+  } catch (error) {
+    if (error instanceof CurseForgeError && error.kind === "fatal") {
+      throw error;
+    }
+    return null;
+  }
 }
 
 async function readModDependencies(
