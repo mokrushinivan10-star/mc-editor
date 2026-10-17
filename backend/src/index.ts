@@ -57,7 +57,7 @@ app.get("/api/status", (_req, res) => {
 app.post("/api/generate-list", requireUser, async (req, res) => {
   const parsed = parsePackRequest(req.body);
   if (!parsed.ok) {
-    res.status(400).json({ status: "error", message: parsed.message });
+    sendJson(res, 400, { status: "error", message: parsed.message });
     return;
   }
 
@@ -66,7 +66,7 @@ app.post("/api/generate-list", requireUser, async (req, res) => {
   try {
     const allowed = await dbService.checkUserLimit(userId);
     if (!allowed) {
-      res.status(403).json({
+      sendJson(res, 403, {
         status: "error",
         message:
           "Вы исчерпали бесплатные лимиты на эту неделю. Перейдите на Premium!",
@@ -82,7 +82,7 @@ app.post("/api/generate-list", requireUser, async (req, res) => {
       error instanceof DbServiceError
         ? error.message
         : "Не удалось проверить лимит генераций.";
-    res.status(503).json({ status: "error", message });
+    sendJson(res, 503, { status: "error", message });
     return;
   }
 
@@ -92,7 +92,7 @@ app.post("/api/generate-list", requireUser, async (req, res) => {
       `ИИ (claude-5.5-sonnet) подобрал моды для «${parsed.pack.name}»:`,
     );
     console.log(JSON.stringify(mods, null, 2));
-    res.json({ status: "ok", mods });
+    sendJson(res, 200, { status: "ok", mods });
   } catch (error) {
     console.error(
       "ИИ не вернул список модов:",
@@ -102,14 +102,14 @@ app.post("/api/generate-list", requireUser, async (req, res) => {
       error instanceof AiServiceError
         ? error.message
         : "Не удалось получить список модов от ИИ.";
-    res.status(502).json({ status: "error", message });
+    sendJson(res, 502, { status: "error", message });
   }
 });
 
 app.post("/api/add-mod-suggestion", async (req, res) => {
   const parsed = parseAddModRequest(req.body);
   if (!parsed.ok) {
-    res.status(400).json({ status: "error", message: parsed.message });
+    sendJson(res, 400, { status: "error", message: parsed.message });
     return;
   }
 
@@ -118,7 +118,7 @@ app.post("/api/add-mod-suggestion", async (req, res) => {
     console.log(
       `ИИ предложил добавить ${mod.id} ${mod.name} к сборке из ${parsed.request.currentMods.length} модов.`,
     );
-    res.json({ status: "ok", mod });
+    sendJson(res, 200, { status: "ok", mod });
   } catch (error) {
     console.error(
       "ИИ не предложил мод:",
@@ -128,14 +128,14 @@ app.post("/api/add-mod-suggestion", async (req, res) => {
       error instanceof AiServiceError
         ? error.message
         : "Не удалось подобрать мод.";
-    res.status(502).json({ status: "error", message });
+    sendJson(res, 502, { status: "error", message });
   }
 });
 
 app.post("/api/build-pack", requireUser, async (req, res) => {
   const parsed = parseBuildRequest(req.body);
   if (!parsed.ok) {
-    res.status(400).json({ status: "error", message: parsed.message });
+    sendJson(res, 400, { status: "error", message: parsed.message });
     return;
   }
 
@@ -181,7 +181,7 @@ app.post("/api/build-pack", requireUser, async (req, res) => {
       error instanceof CurseForgeError
         ? error.message
         : "Не удалось скачать моды с CurseForge.";
-    res.status(502).json({ status: "error", message });
+    sendJson(res, 502, { status: "error", message });
     return;
   }
 
@@ -222,7 +222,7 @@ app.post("/api/build-pack", requireUser, async (req, res) => {
       error instanceof Error ? error.message : error,
     );
     if (!res.headersSent) {
-      res.status(502).json({
+      sendJson(res, 502, {
         status: "error",
         message: "Список модов получен, но архив собрать не удалось.",
       });
@@ -407,13 +407,13 @@ async function requireUser(
   const header = req.get("authorization") ?? "";
   const match = /^Bearer\s+(\S+)$/i.exec(header.trim());
   if (!match?.[1]) {
-    res.status(401).json({ status: "error", message: "Нужно войти." });
+    sendJson(res, 401, { status: "error", message: "Нужно войти." });
     return;
   }
 
   const supabase = dbService.authClient();
   if (!supabase) {
-    res.status(503).json({
+    sendJson(res, 503, {
       status: "error",
       message: "Supabase ещё не подключён.",
     });
@@ -423,7 +423,7 @@ async function requireUser(
   try {
     const { data, error } = await supabase.auth.getUser(match[1]);
     if (error || !data.user) {
-      res.status(401).json({
+      sendJson(res, 401, {
         status: "error",
         message: "Сессия недействительна. Войдите снова.",
       });
@@ -436,6 +436,12 @@ async function requireUser(
   } catch (error) {
     next(error);
   }
+}
+
+function sendJson(res: Response, status: number, body: unknown): void {
+  res.status(status);
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.send(JSON.stringify(body));
 }
 
 function logSecret(name: string, value: string | undefined): void {

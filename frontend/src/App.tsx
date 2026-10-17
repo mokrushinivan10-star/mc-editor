@@ -171,14 +171,10 @@ function App() {
         }),
       });
 
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as
-          | StatusResponse
-          | null;
-        throw new Error(data?.message ?? "Сервер не смог подобрать моды.");
-      }
-
-      const data = (await response.json()) as ListResponse;
+      const data = await readJson<ListResponse>(
+        response,
+        "Сервер не смог подобрать моды.",
+      );
       if (!Array.isArray(data.mods) || data.mods.length === 0) {
         throw new Error("ИИ не вернул список модов.");
       }
@@ -213,14 +209,10 @@ function App() {
         }),
       });
 
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as
-          | StatusResponse
-          | null;
-        throw new Error(data?.message ?? "Сервер не смог подобрать мод.");
-      }
-
-      const data = (await response.json()) as { mod?: GeneratedMod };
+      const data = await readJson<{ mod?: GeneratedMod; message?: string }>(
+        response,
+        "Сервер не смог подобрать мод.",
+      );
       const newMod = data.mod;
       if (!newMod || typeof newMod.id !== "number" || !newMod.name) {
         throw new Error("ИИ не вернул мод.");
@@ -523,6 +515,29 @@ function authHeaders(accessToken: string | undefined): HeadersInit {
     "Content-Type": "application/json",
     ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
   };
+}
+
+async function readJson<T extends { message?: string }>(
+  response: Response,
+  fallback: string,
+): Promise<T> {
+  const text = await response.text();
+  if (text.startsWith("PK")) {
+    throw new Error("Сервер прислал архив вместо списка модов.");
+  }
+
+  let data: T;
+  try {
+    data = JSON.parse(text) as T;
+  } catch {
+    throw new Error(response.ok ? "Сервер прислал не JSON." : fallback);
+  }
+
+  if (!response.ok) {
+    throw new Error(data.message ?? fallback);
+  }
+
+  return data;
 }
 
 async function blobLooksLikeZip(blob: Blob): Promise<boolean> {
