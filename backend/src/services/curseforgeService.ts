@@ -85,6 +85,7 @@ export async function resolveAllDependencies(
   modIds: number[],
   gameVersion: string,
   modLoader: ModLoader,
+  loaderBuild: string,
 ): Promise<DependencyPlan> {
   const api = createApi();
   const selected = new Set<number>();
@@ -102,7 +103,7 @@ export async function resolveAllDependencies(
   }
 
   console.log(
-    `CurseForge: начинаю обход зависимостей. В очереди ${queue.length}, версия ${gameVersion}, лоадер ${LOADER_LABEL[modLoader]}.`,
+    `CurseForge: начинаю обход зависимостей. В очереди ${queue.length}, Minecraft ${gameVersion}, ${LOADER_LABEL[modLoader]} ${loaderBuild}.`,
   );
 
   while (queue.length > 0) {
@@ -119,7 +120,7 @@ export async function resolveAllDependencies(
 
     let file: CurseFile | undefined;
     try {
-      file = await findMatchingFile(api, modId, gameVersion, modLoader);
+      file = await findMatchingFile(api, modId, gameVersion, modLoader, loaderBuild);
       resolved.set(modId, file);
     } catch (error) {
       if (error instanceof CurseForgeError && error.kind === "fatal") {
@@ -175,8 +176,14 @@ export async function downloadMods(
   gameVersion: string,
   modLoader: ModLoader,
   cacheDir: string,
+  loaderBuild: string,
 ): Promise<DownloadBatch> {
-  const plan = await resolveAllDependencies(modIds, gameVersion, modLoader);
+  const plan = await resolveAllDependencies(
+    modIds,
+    gameVersion,
+    modLoader,
+    loaderBuild,
+  );
   const api = createApi();
   const usedNames = new Set<string>();
   const downloaded: DownloadedMod[] = [];
@@ -310,6 +317,7 @@ async function findMatchingFile(
   modId: number,
   gameVersion: string,
   modLoader: ModLoader,
+  loaderBuild: string,
 ): Promise<CurseFile> {
   const files: CurseFile[] = [];
 
@@ -354,10 +362,15 @@ async function findMatchingFile(
     );
   }
 
-  const match = chooseFile(files, gameVersion, LOADER_LABEL[modLoader]);
+  const match = chooseFile(
+    files,
+    gameVersion,
+    LOADER_LABEL[modLoader],
+    loaderBuild,
+  );
   if (!match) {
     throw new CurseForgeError(
-      `Для мода ${modId} нет jar под Minecraft ${gameVersion} и ${LOADER_LABEL[modLoader]}.`,
+      `Для мода ${modId} нет jar под Minecraft ${gameVersion} и ${LOADER_LABEL[modLoader]} ${loaderBuild}.`,
       "missing",
     );
   }
@@ -365,10 +378,37 @@ async function findMatchingFile(
   return match;
 }
 
+function fileDeclaresOtherLoaderLine(
+  versions: string[],
+  gameVersion: string,
+  loaderBuild: string,
+): boolean {
+  const ourMajor = loaderBuild.split(".")[0] ?? "";
+  if (!/^\d+$/.test(ourMajor) || Number(ourMajor) < 14) {
+    return false;
+  }
+
+  for (const token of versions) {
+    if (token.toLowerCase() === gameVersion.toLowerCase()) {
+      continue;
+    }
+    const major = /^(\d+)\.\d+/.exec(token)?.[1];
+    if (!major || Number(major) < 14) {
+      continue;
+    }
+    if (major !== ourMajor) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function chooseFile(
   files: CurseFile[],
   gameVersion: string,
   loaderLabel: string,
+  loaderBuild: string,
 ): CurseFile | undefined {
   const suitable = files.filter((file) => {
     if (!file.fileName.toLowerCase().endsWith(".jar")) {
@@ -389,7 +429,11 @@ export function chooseFile(
     const hasLoader = versions.some(
       (version) => version.toLowerCase() === loaderLabel.toLowerCase(),
     );
-    return hasGame && hasLoader;
+    return (
+      hasGame &&
+      hasLoader &&
+      !fileDeclaresOtherLoaderLine(versions, gameVersion, loaderBuild)
+    );
   });
 
   const releases = suitable.filter((file) => file.releaseType === 1);

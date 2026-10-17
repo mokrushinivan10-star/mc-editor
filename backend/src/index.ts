@@ -7,9 +7,11 @@ import express, {
 } from "express";
 import {
   streamPackZip,
+  LoaderVersionError,
   parseAddModRequest,
   parseBuildRequest,
   parsePackRequest,
+  resolveLoaderVersion,
   zipFileName,
   type ModLoader,
   type PackRequest,
@@ -86,13 +88,31 @@ app.post("/api/generate-list", requireUser, async (req, res) => {
     return;
   }
 
+  let loaderBuild: string;
   try {
-    const mods = await suggestMods(parsed.pack);
+    loaderBuild = await resolveLoaderVersion(
+      parsed.pack.gameVersion,
+      parsed.pack.modLoader,
+    );
+  } catch (error) {
+    const message =
+      error instanceof LoaderVersionError
+        ? error.message
+        : "Не удалось подобрать версию загрузчика.";
+    sendJson(res, 400, { status: "error", message });
+    return;
+  }
+
+  try {
+    const mods = await suggestMods({
+      ...parsed.pack,
+      loaderVersion: loaderBuild,
+    });
     console.log(
       `ИИ (claude-5.5-sonnet) подобрал моды для «${parsed.pack.name}»:`,
     );
     console.log(JSON.stringify(mods, null, 2));
-    sendJson(res, 200, { status: "ok", mods });
+    sendJson(res, 200, { status: "ok", mods, loaderVersion: loaderBuild });
   } catch (error) {
     console.error(
       "ИИ не вернул список модов:",
@@ -113,8 +133,26 @@ app.post("/api/add-mod-suggestion", async (req, res) => {
     return;
   }
 
+  let loaderBuild: string;
   try {
-    const mod = await suggestOneMod(parsed.request);
+    loaderBuild = await resolveLoaderVersion(
+      parsed.request.gameVersion,
+      parsed.request.modLoader,
+    );
+  } catch (error) {
+    const message =
+      error instanceof LoaderVersionError
+        ? error.message
+        : "Не удалось подобрать версию загрузчика.";
+    sendJson(res, 400, { status: "error", message });
+    return;
+  }
+
+  try {
+    const mod = await suggestOneMod({
+      ...parsed.request,
+      loaderVersion: loaderBuild,
+    });
     console.log(
       `ИИ предложил добавить ${mod.id} ${mod.name} к сборке из ${parsed.request.currentMods.length} модов.`,
     );
@@ -141,11 +179,27 @@ app.post("/api/build-pack", requireUser, async (req, res) => {
 
   const userId = String(res.locals.userId);
 
+  let loaderBuild: string;
+  try {
+    loaderBuild = await resolveLoaderVersion(
+      parsed.build.gameVersion,
+      parsed.build.modLoader,
+    );
+  } catch (error) {
+    const message =
+      error instanceof LoaderVersionError
+        ? error.message
+        : "Не удалось подобрать версию загрузчика.";
+    sendJson(res, 400, { status: "error", message });
+    return;
+  }
+
   const pack: PackRequest = {
     name: parsed.build.name,
     gameVersion: parsed.build.gameVersion,
     modLoader: parsed.build.modLoader,
     prompt: "сборка",
+    loaderVersion: loaderBuild,
   };
   const mods = parsed.build.mods;
 
@@ -248,14 +302,16 @@ app.listen(PORT, () => {
 
 async function collectJars(
   mods: SuggestedMod[],
-  pack: { gameVersion: string; modLoader: ModLoader },
+  pack: { gameVersion: string; modLoader: ModLoader; loaderVersion?: string },
   cacheDir: string,
 ): Promise<{ jars: DownloadedMod[]; replaced: string[]; excluded: string[] }> {
+  const loaderBuild = pack.loaderVersion ?? "";
   const first = await downloadMods(
     mods.map((mod) => mod.id),
     pack.gameVersion,
     pack.modLoader,
     cacheDir,
+    loaderBuild,
   );
   const jars = [...first.downloaded];
   const replaced: string[] = [];
@@ -281,6 +337,7 @@ async function collectJars(
       missing,
       gameVersion: pack.gameVersion,
       modLoader: pack.modLoader,
+      loaderVersion: loaderBuild,
     });
     console.log("ИИ предложил замены:", JSON.stringify(replacements, null, 2));
   } catch (error) {
@@ -307,6 +364,7 @@ async function collectJars(
       pack.gameVersion,
       pack.modLoader,
       cacheDir,
+      loaderBuild,
     );
     secondDownloaded.push(...second.downloaded);
     secondMissing.push(...second.missingMods);

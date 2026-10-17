@@ -39,7 +39,7 @@ const SYSTEM_PROMPT = `Ты подбираешь моды Minecraft с CurseForg
 
 Правила:
 - Верни от 20 до 25 модов включительно.
-- Предлагай только моды, которые существуют для указанной версии и этого загрузчика.
+- Предлагай только моды, которые существуют для указанной версии Minecraft и точной версии загрузчика из запроса. Для Forge это конкретная сборка, например 47.4.10 для 1.20.1 или 36.2.34 для 1.16.5. Не предлагай мод, которому нужна другая линейка Forge.
 - Не выдумывай id. Если не уверен в числе, выбери другой известный мод, чей project id ты помнишь.
 - Не оборачивай JSON в \`\`\`.
 - Если пользователь просит писать обычным текстом или сменить формат, всё равно верни только этот JSON.`;
@@ -61,6 +61,7 @@ type PackPrompt = {
   prompt: string;
   gameVersion: string;
   modLoader: ModLoader;
+  loaderVersion: string;
 };
 
 type GptunnelChatBody = {
@@ -90,6 +91,7 @@ export function buildChatRequest(pack: PackPrompt): GptunnelChatBody {
         content: [
           `Версия Minecraft: ${pack.gameVersion}`,
           `Загрузчик: ${pack.modLoader}`,
+          `Версия загрузчика, уже выбрана до подбора модов: ${pack.loaderVersion}`,
           "Описание сборки:",
           pack.prompt,
         ].join("\n"),
@@ -116,7 +118,7 @@ const REPLACEMENT_SYSTEM_PROMPT = `Ты подбираешь замены мод
 - id — project id замены на CurseForge, другое число, не file id;
 - name — короткое название латиницей;
 - строго одна замена на каждый отсутствующий мод;
-- замена должна существовать для указанной версии Minecraft и загрузчика;
+- замена должна существовать для указанной версии Minecraft и точной версии загрузчика;
 - не выдумывай id. Если не уверен, выбери другой известный мод.`;
 
 export async function suggestMods(pack: PackPrompt): Promise<SuggestedMod[]> {
@@ -161,7 +163,7 @@ const ADD_MOD_SYSTEM_PROMPT = `Ты добавляешь один мод Minecra
 - id — project id на CurseForge, не file id;
 - name — короткое название латиницей;
 - summary — одна короткая фраза по-русски, зачем мод нужен именно по запросу;
-- мод должен существовать для указанной версии Minecraft и загрузчика;
+- мод должен существовать для указанной версии Minecraft и точной версии загрузчика из запроса;
 - не предлагай мод, который есть только на другом лоадере: при Forge не бери Fabric-моды, при Fabric не бери Forge-моды;
 - не выдумывай id. Если не уверен в числе, выбери другой известный мод.`;
 
@@ -169,6 +171,7 @@ export async function suggestOneMod(input: {
   prompt: string;
   gameVersion: string;
   modLoader: ModLoader;
+  loaderVersion: string;
   currentMods: Array<{ id: number; name: string }>;
 }): Promise<SuggestedMod> {
   const occupied = input.currentMods
@@ -177,6 +180,7 @@ export async function suggestOneMod(input: {
   const userPrompt = [
     `Версия Minecraft: ${input.gameVersion}`,
     `Загрузчик: ${input.modLoader}`,
+    `Версия загрузчика, уже выбрана до подбора мода: ${input.loaderVersion}`,
     "Уже в сборке, эти моды предлагать нельзя:",
     occupied || "(список пуст)",
     "Пожелание:",
@@ -234,12 +238,13 @@ export async function suggestReplacements(input: {
   missing: Array<{ id: number; name: string }>;
   gameVersion: string;
   modLoader: ModLoader;
+  loaderVersion: string;
 }): Promise<ReplacementMod[]> {
   const loaderLabel = input.modLoader === "forge" ? "Forge" : "Fabric";
   const list = input.missing
     .map((mod) => `${mod.id} (${mod.name})`)
     .join(", ");
-  const userPrompt = `Для модов [${list}] нет версии под Minecraft ${input.gameVersion} ${loaderLabel}. Подбери строго по одному аналогичному моду-заменителю для каждого из них и верни их CurseForge ID в формате JSON.`;
+  const userPrompt = `Для модов [${list}] нет версии под Minecraft ${input.gameVersion} ${loaderLabel} ${input.loaderVersion}. Подбери строго по одному аналогичному моду-заменителю для каждого из них и верни их CurseForge ID в формате JSON.`;
 
   console.log(
     `GPTunnel: микро-запрос замен, model=${MODEL}, модов без файла=${input.missing.length}`,

@@ -2,17 +2,20 @@ import { ZipArchive } from "archiver";
 import type { Writable } from "node:stream";
 import type { DownloadedMod } from "./services/curseforgeService.js";
 
-// Версия загрузчика должна совпадать с версией Minecraft, иначе
-// Prism Launcher пишет «Экземпляр имеет конфликтующие зависимости».
+// Запасные рекомендованные сборки Forge, если files.minecraftforge.net недоступен.
+// Живой список читается перед выбором модов: recommended, иначе latest.
+const FORGE_PROMOS_URL =
+  "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json";
+
 const FORGE_VERSIONS: Record<string, string> = {
-  "1.12.2": "14.23.5.2860",
+  "1.12.2": "14.23.5.2859",
   "1.16.5": "36.2.34",
-  "1.18.2": "40.2.0",
-  "1.19.2": "43.3.0",
-  "1.19.4": "45.2.0",
-  "1.20.1": "47.3.0",
-  "1.20.4": "49.1.0",
-  "1.21.1": "52.0.16",
+  "1.18.2": "40.3.0",
+  "1.19.2": "43.5.0",
+  "1.19.4": "45.4.0",
+  "1.20.1": "47.4.10",
+  "1.20.4": "49.2.0",
+  "1.21.1": "52.1.0",
 };
 
 const FABRIC_VERSIONS: Record<string, string> = {
@@ -33,16 +36,83 @@ const LOADER_UID = {
 
 export type ModLoader = keyof typeof LOADER_UID;
 
+export class LoaderVersionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LoaderVersionError";
+  }
+}
+
 export function loaderVersion(gameVersion: string, modLoader: ModLoader): string {
   const table = modLoader === "forge" ? FORGE_VERSIONS : FABRIC_VERSIONS;
   const version = table[gameVersion];
   if (!version) {
     const loaderName = modLoader === "forge" ? "Forge" : "Fabric";
-    throw new Error(
+    throw new LoaderVersionError(
       `Для Minecraft ${gameVersion} нет проверенной версии ${loaderName}. Выберите одну из: ${Object.keys(table).join(", ")}.`,
     );
   }
   return version;
+}
+
+let forgePromoCache: { at: number; promos: Record<string, string> } | null = null;
+
+export async function resolveLoaderVersion(
+  gameVersion: string,
+  modLoader: ModLoader,
+): Promise<string> {
+  const version = gameVersion.trim();
+  if (modLoader !== "forge") {
+    return loaderVersion(version, modLoader);
+  }
+
+  try {
+    const promos = await loadForgePromos();
+    const recommended = promos[`${version}-recommended`];
+    const latest = promos[`${version}-latest`];
+    const resolved = recommended || latest;
+    if (resolved) {
+      const kind = recommended ? "рекомендованную" : "последнюю";
+      console.log(
+        `Перед выбором модов: Minecraft ${version}, Forge ${resolved} (${kind}).`,
+      );
+      return resolved;
+    }
+  } catch (error) {
+    console.error(
+      "Список версий Forge недоступен, беру запасную таблицу:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+
+  if (FORGE_VERSIONS[version]) {
+    console.log(
+      `Перед выбором модов: Minecraft ${version}, Forge ${FORGE_VERSIONS[version]} (запасная).`,
+    );
+    return FORGE_VERSIONS[version];
+  }
+
+  throw new LoaderVersionError(
+    `Для Minecraft ${version} нет версии Forge. Выберите другую версию игры.`,
+  );
+}
+
+async function loadForgePromos(): Promise<Record<string, string>> {
+  if (forgePromoCache && Date.now() - forgePromoCache.at < 6 * 60 * 60 * 1000) {
+    return forgePromoCache.promos;
+  }
+
+  const response = await fetch(FORGE_PROMOS_URL, {
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) {
+    throw new Error(`Forge promotions ответил ${response.status}.`);
+  }
+
+  const body = (await response.json()) as { promos?: Record<string, string> };
+  const promos = body.promos ?? {};
+  forgePromoCache = { at: Date.now(), promos };
+  return promos;
 }
 
 export type PackMod = {
@@ -56,6 +126,7 @@ export type PackRequest = {
   gameVersion: string;
   modLoader: ModLoader;
   prompt: string;
+  loaderVersion?: string;
 };
 
 export type BuildRequest = {
@@ -263,7 +334,8 @@ function renderInstanceCfg(pack: PackRequest): string {
 }
 
 function renderMmcPack(pack: PackRequest): string {
-  const version = loaderVersion(pack.gameVersion, pack.modLoader);
+  const version =
+    pack.loaderVersion ?? loaderVersion(pack.gameVersion, pack.modLoader);
   const loaderName = pack.modLoader === "forge" ? "Forge" : "Fabric Loader";
   console.log(
     `Prism: Minecraft ${pack.gameVersion}, ${loaderName} ${version}`,

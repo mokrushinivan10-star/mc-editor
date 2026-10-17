@@ -28,6 +28,7 @@ type ListResponse = {
   status: string;
   message?: string;
   mods: GeneratedMod[];
+  loaderVersion?: string;
 };
 
 function App() {
@@ -42,6 +43,7 @@ function App() {
   );
   const [step, setStep] = useState<Step>("input");
   const [generatedMods, setGeneratedMods] = useState<GeneratedMod[]>([]);
+  const [loaderVersion, setLoaderVersion] = useState<string | null>(null);
   const [addWish, setAddWish] = useState("");
   const [suggesting, setSuggesting] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -180,6 +182,7 @@ function App() {
       }
 
       setGeneratedMods(data.mods);
+      setLoaderVersion(data.loaderVersion ?? null);
       setStep("edit");
     } catch (generateError) {
       setBuildError(
@@ -423,6 +426,9 @@ function App() {
           <div className="mt-8">
             <p className="text-center text-sm text-zinc-400">
               Модов в сборке: {generatedMods.length}. Уберите лишнее до скачивания.
+              {loaderVersion
+                ? ` Загрузчик для ${gameVersion}: ${modLoader === "forge" ? "Forge" : "Fabric"} ${loaderVersion}.`
+                : ""}
             </p>
             <ul className="mt-5 space-y-3">
               {generatedMods.map((mod, index) => (
