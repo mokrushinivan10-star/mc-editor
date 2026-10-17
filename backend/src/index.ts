@@ -364,6 +364,7 @@ app.post("/api/build-pack", requireUser, async (req, res) => {
       res,
       pack,
       collected.jars,
+      parsed.build.packFormat,
       warning
         ? renderWarnings(collected.replaced, collected.excluded)
         : undefined,

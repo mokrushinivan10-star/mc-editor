@@ -35,6 +35,7 @@ const LOADER_UID = {
 } as const;
 
 export type ModLoader = keyof typeof LOADER_UID;
+export type PackFormat = "prism" | "mods";
 
 export class LoaderVersionError extends Error {
   constructor(message: string) {
@@ -133,6 +134,7 @@ export type BuildRequest = {
   name: string;
   gameVersion: string;
   modLoader: ModLoader;
+  packFormat: PackFormat;
   mods: PackMod[];
 };
 
@@ -236,6 +238,14 @@ export function parseBuildRequest(body: unknown): BuildParseResult {
     return { ok: false, message: "Максимальный размер сборки — 40 модов!" };
   }
 
+  const packFormat = parsePackFormat(record.packFormat);
+  if (!packFormat) {
+    return {
+      ok: false,
+      message: "Выберите формат сборки: Prism Launcher или ZIP с модами.",
+    };
+  }
+
   const mods: PackMod[] = [];
   for (const item of record.mods) {
     if (typeof item !== "object" || item === null) {
@@ -260,9 +270,20 @@ export function parseBuildRequest(body: unknown): BuildParseResult {
       name: header.pack.name,
       gameVersion: header.pack.gameVersion,
       modLoader: header.pack.modLoader,
+      packFormat,
       mods,
     },
   };
+}
+
+function parsePackFormat(value: unknown): PackFormat | null {
+  if (value === undefined) {
+    return "prism";
+  }
+  if (value === "prism" || value === "mods") {
+    return value;
+  }
+  return null;
 }
 
 export function parseAddModRequest(body: unknown): AddModParseResult {
@@ -373,6 +394,7 @@ export async function streamPackZip(
   output: Writable,
   pack: PackRequest,
   mods: DownloadedMod[],
+  packFormat: PackFormat,
   warningText?: string,
 ): Promise<void> {
   const archive = new ZipArchive({ zlib: { level: 9 } });
@@ -382,14 +404,23 @@ export async function streamPackZip(
     archive.on("end", () => resolve());
   });
 
+  const modFolder = packFormat === "prism" ? ".minecraft/mods" : "mods";
+  console.log(
+    packFormat === "prism"
+      ? `Архив Prism: моды в ${modFolder}, плюс instance.cfg и mmc-pack.json.`
+      : "Архив с модами: только папка mods, без файлов лаунчера.",
+  );
+
   // pipe соединяет выход архиватора прямо с HTTP-ответом.
   // Готовые куски ZIP уходят клиенту и не записываются в файл на диске.
   archive.pipe(output);
-  archive.append(renderInstanceCfg(pack), { name: "instance.cfg" });
-  archive.append(renderMmcPack(pack), { name: "mmc-pack.json" });
+  if (packFormat === "prism") {
+    archive.append(renderInstanceCfg(pack), { name: "instance.cfg" });
+    archive.append(renderMmcPack(pack), { name: "mmc-pack.json" });
+  }
 
   for (const mod of mods) {
-    archive.file(mod.filePath, { name: `.minecraft/mods/${mod.fileName}` });
+    archive.file(mod.filePath, { name: `${modFolder}/${mod.fileName}` });
   }
 
   if (warningText) {

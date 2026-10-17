@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
+import { PlanCatalog, SiteFooter, type PlanId } from "./legal";
 import { supabase } from "./supabaseClient";
 
 const API_URL = "https://mc-editor.onrender.com";
@@ -16,20 +17,8 @@ type StatusResponse = {
 };
 
 type ModLoader = "forge" | "fabric";
+type PackFormat = "prism" | "mods";
 type Step = "input" | "edit";
-type ShopTier = "premium" | "ultra" | "max";
-
-const SHOP_PLANS: Array<{
-  tier: ShopTier;
-  title: string;
-  quota: string;
-  price: string;
-}> = [
-  { tier: "premium", title: "Premium", quota: "15 генераций/неделю", price: "200₽" },
-  { tier: "ultra", title: "Ultra", quota: "30 генераций/неделю", price: "400₽" },
-  { tier: "max", title: "Максимум", quota: "Безлимит генераций", price: "1000₽" },
-];
-
 type GeneratedMod = {
   id: number;
   name: string;
@@ -50,6 +39,7 @@ function App() {
   const [name, setName] = useState("Моя сборка");
   const [gameVersion, setGameVersion] = useState("1.20.1");
   const [modLoader, setModLoader] = useState<ModLoader>("forge");
+  const [packFormat, setPackFormat] = useState<PackFormat>("prism");
   const [prompt, setPrompt] = useState(
     "Стимпанк, поезда, сложные монстры ночами",
   );
@@ -69,8 +59,7 @@ function App() {
   const [sendingLink, setSendingLink] = useState(false);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [shopOpen, setShopOpen] = useState(false);
-  const [buyingTier, setBuyingTier] = useState<ShopTier | null>(null);
+  const [buyingTier, setBuyingTier] = useState<PlanId | null>(null);
   const [shopError, setShopError] = useState<string | null>(null);
   const [shopNote, setShopNote] = useState<string | null>(null);
 
@@ -105,8 +94,7 @@ function App() {
     if (params.get("shop") !== "paid") {
       return;
     }
-    setShopNote("Если оплата прошла, тариф обновится в течение минуты.");
-    setShopOpen(true);
+    setShopNote("Если оплата прошла, тариф откроется в кабинете в течение 5 минут.");
     params.delete("shop");
     const next = params.toString();
     window.history.replaceState({}, "", next ? `?${next}` : window.location.pathname);
@@ -182,7 +170,7 @@ function App() {
     }
   }
 
-  async function buyPlan(tier: ShopTier) {
+  async function buyPlan(tier: PlanId) {
     setBuyingTier(tier);
     setShopError(null);
 
@@ -318,6 +306,7 @@ function App() {
           name,
           gameVersion,
           modLoader,
+          packFormat,
           mods: generatedMods,
         }),
       });
@@ -355,13 +344,13 @@ function App() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-zinc-900 bg-[linear-gradient(rgba(0,0,0,0.35)_2px,transparent_2px),linear-gradient(90deg,rgba(0,0,0,0.35)_2px,transparent_2px)] bg-size-[32px_32px] px-4 py-12 text-zinc-200">
+    <main className="flex min-h-screen flex-col items-center bg-zinc-900 bg-[linear-gradient(rgba(0,0,0,0.35)_2px,transparent_2px),linear-gradient(90deg,rgba(0,0,0,0.35)_2px,transparent_2px)] bg-size-[32px_32px] px-4 py-12 text-zinc-200">
       <section className="w-full max-w-2xl border-4 border-t-zinc-500 border-r-zinc-900 border-b-zinc-950 border-l-zinc-600 bg-zinc-800 p-8 sm:p-10">
         <p className="text-center font-pixel text-sm tracking-wide text-[#D6B56A]">
           AI Minecraft Modpack Generator
         </p>
         <h1 className="mt-4 text-center font-pixel text-2xl leading-relaxed text-[#8FB58A] sm:text-3xl">
-          Сборка для Prism Launcher
+          ИИ генератор сборок
         </h1>
         {error ? (
           <p className="mt-6 text-center text-[#FF5555]">{error}</p>
@@ -379,16 +368,12 @@ function App() {
         )}
 
         <div className="mt-5 flex justify-center">
-          <button
+          <a
             className="border-4 border-t-[#F5E6B8] border-r-[#8A7040] border-b-[#6E5828] border-l-[#E7D7A1] bg-[#3F3A2A] px-4 py-3 font-pixel text-sm text-[#D6B56A] hover:text-[#F5E6B8]"
-            type="button"
-            onClick={() => {
-              setShopError(null);
-              setShopOpen(true);
-            }}
+            href="#uslugi"
           >
-            💎 Магазин подписок
-          </button>
+            💎 Услуги и цены
+          </a>
         </div>
         {shopNote ? (
           <p className="mt-4 text-center text-sm text-[#8FB58A]">{shopNote}</p>
@@ -485,6 +470,8 @@ function App() {
             </select>
           </label>
 
+          <FormatField />
+
           <label className="block text-sm text-zinc-300">
             Опиши сборку своей мечты (ИИ подберет моды)
             <textarea
@@ -557,13 +544,20 @@ function App() {
                 </button>
               </div>
             </form>
+            <div className="mt-6">
+              <FormatField />
+            </div>
             <button
               className={`${buttonClass} mt-6`}
               type="button"
               onClick={() => void downloadPack()}
               disabled={building || generatedMods.length === 0}
             >
-              {building ? "Собираю архив..." : "⛏️ Собрать и Скачать готовый ZIP"}
+              {building
+                ? "Собираю архив..."
+                : packFormat === "prism"
+                  ? "⛏️ Собрать для Prism Launcher"
+                  : "⛏️ Скачать ZIP-папку с модами"}
             </button>
             <button
               className="mt-3 w-full px-4 py-2 text-sm text-zinc-400 underline-offset-4 hover:text-zinc-200 hover:underline"
@@ -588,66 +582,38 @@ function App() {
         {session ? (
           <p className="mt-6 text-center text-xs leading-5 text-zinc-500">
             Сначала ИИ показывает список. После правки CurseForge добирает
-            библиотеки и кладёт jar в .minecraft/mods внутри ZIP.
+            библиотеки. Prism кладёт их в .minecraft/mods вместе с файлами
+            экземпляра, обычный ZIP — в папку mods.
           </p>
         ) : null}
       </section>
-      {shopOpen ? <ShopModal /> : null}
+      <PlanCatalog
+        buyingTier={buyingTier}
+        error={shopError}
+        onBuy={(tier) => void buyPlan(tier)}
+      />
+      <SiteFooter />
     </main>
   );
 
-  function ShopModal() {
+  function FormatField() {
     return (
-      <div
-        className="fixed inset-0 z-20 flex items-center justify-center bg-black/75 px-4 py-8"
-        onClick={() => setShopOpen(false)}
-      >
-        <div
-          className="w-full max-w-4xl border-4 border-t-zinc-500 border-r-zinc-900 border-b-zinc-950 border-l-zinc-600 bg-zinc-800 p-6 sm:p-8"
-          role="dialog"
-          aria-labelledby="shop-title"
-          onClick={(event) => event.stopPropagation()}
+      <label className="block text-sm text-zinc-300">
+        Формат сборки
+        <select
+          className={fieldClass}
+          value={packFormat}
+          onChange={(event) => setPackFormat(event.target.value as PackFormat)}
         >
-          <div className="flex items-start justify-between gap-4">
-            <h2 id="shop-title" className="font-pixel text-2xl text-[#D6B56A]">
-              💎 Магазин подписок
-            </h2>
-            <button
-              className="border-4 border-t-zinc-400 border-r-zinc-600 border-b-zinc-700 border-l-zinc-500 bg-zinc-700 px-3 py-2 text-sm text-zinc-100 hover:border-red-400 hover:text-[#FF5555]"
-              type="button"
-              onClick={() => setShopOpen(false)}
-            >
-              Закрыть
-            </button>
-          </div>
-          <p className="mt-3 text-sm text-zinc-400">
-            Бесплатно — 3 генерации в неделю. Оплата открывает тариф сразу после подтверждения ЮKassa.
-          </p>
-          <div className="mt-6 grid gap-4 md:grid-cols-3">
-            {SHOP_PLANS.map((plan) => (
-              <article
-                key={plan.tier}
-                className="flex flex-col border-4 border-t-zinc-600 border-r-zinc-950 border-b-black border-l-zinc-700 bg-black p-4"
-              >
-                <h3 className="font-pixel text-lg text-[#8FB58A]">{plan.title}</h3>
-                <p className="mt-4 font-pixel text-3xl text-[#D6B56A]">{plan.price}</p>
-                <p className="mt-3 flex-1 text-sm text-zinc-300">{plan.quota}</p>
-                <button
-                  className={`${buttonClass} mt-5`}
-                  type="button"
-                  onClick={() => void buyPlan(plan.tier)}
-                  disabled={buyingTier !== null}
-                >
-                  {buyingTier === plan.tier ? "Открываю оплату..." : "Купить"}
-                </button>
-              </article>
-            ))}
-          </div>
-          {shopError ? (
-            <p className="mt-5 text-center text-sm text-[#FF5555]">{shopError}</p>
-          ) : null}
-        </div>
-      </div>
+          <option value="prism">Экземпляр Prism Launcher</option>
+          <option value="mods">Обычная ZIP-папка с модами</option>
+        </select>
+        <span className="mt-2 block text-xs leading-5 text-zinc-500">
+          {packFormat === "prism"
+            ? "Архив можно импортировать в Prism: внутри instance.cfg, mmc-pack.json и моды."
+            : "Внутри только папка mods с jar-файлами. Её можно скопировать в другой лаунчер."}
+        </span>
+      </label>
     );
   }
 }
