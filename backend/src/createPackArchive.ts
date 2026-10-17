@@ -233,7 +233,7 @@ export function parseBuildRequest(body: unknown): BuildParseResult {
   }
 
   if (record.mods.length > 40) {
-    return { ok: false, message: "В сборке не больше 40 модов." };
+    return { ok: false, message: "Максимальный размер сборки — 40 модов!" };
   }
 
   const mods: PackMod[] = [];

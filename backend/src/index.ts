@@ -32,7 +32,17 @@ import {
   type DownloadedMod,
   type MissingMod,
 } from "./services/curseforgeService.js";
-import { dbService, DbServiceError } from "./services/dbService.js";
+import {
+  dbService,
+  DbServiceError,
+  type SubscriptionTier,
+} from "./services/dbService.js";
+import {
+  createPayment,
+  isPaidTier,
+  PaymentServiceError,
+  readSucceededPayment,
+} from "./services/paymentService.js";
 
 const app = express();
 const PORT = 5000;
@@ -41,6 +51,8 @@ logSecret("CURSEFORGE_API_KEY", process.env.CURSEFORGE_API_KEY);
 logSecret("AI_SERVICE_API_KEY", process.env.AI_SERVICE_API_KEY);
 logSecret("SUPABASE_URL", process.env.SUPABASE_URL);
 logSecret("SUPABASE_ANON_KEY", process.env.SUPABASE_ANON_KEY);
+logSecret("YOOKASSA_SHOP_ID", process.env.YOOKASSA_SHOP_ID);
+logSecret("YOOKASSA_SECRET_KEY", process.env.YOOKASSA_SECRET_KEY);
 
 // Фронтенд откроется на другом порту (обычно 5173).
 // Без этого разрешения браузер заблокирует ответ как «чужой».
@@ -56,6 +68,87 @@ app.get("/api/status", (_req, res) => {
   });
 });
 
+app.post("/api/payments/create", requireUser, async (req, res) => {
+  const tier = (req.body as { tier?: unknown } | null)?.tier;
+  if (!isPaidTier(tier)) {
+    sendJson(res, 400, {
+      status: "error",
+      message: "Выберите тариф: premium, ultra или max.",
+    });
+    return;
+  }
+
+  const userId = String(res.locals.userId);
+  try {
+    const payment = await createPayment({
+      tier,
+      userId,
+      returnUrl: paymentReturnUrl(req),
+    });
+    sendJson(res, 200, {
+      status: "ok",
+      confirmationUrl: payment.confirmationUrl,
+    });
+  } catch (error) {
+    console.error(
+      "ЮKassa не создала платёж:",
+      error instanceof Error ? error.message : error,
+    );
+    const message =
+      error instanceof PaymentServiceError
+        ? error.message
+        : "Не удалось создать платёж.";
+    const status = error instanceof PaymentServiceError ? error.statusCode : 502;
+    sendJson(res, status, { status: "error", message });
+  }
+});
+
+app.post("/api/payments/webhook", async (req, res) => {
+  const notification = req.body as {
+    event?: unknown;
+    object?: { id?: unknown };
+  };
+  if (notification?.event !== "payment.succeeded") {
+    sendJson(res, 200, { status: "ignored" });
+    return;
+  }
+
+  const paymentId =
+    typeof notification.object?.id === "string"
+      ? notification.object.id.trim()
+      : "";
+  if (!paymentId) {
+    sendJson(res, 400, {
+      status: "error",
+      message: "В уведомлении нет id платежа.",
+    });
+    return;
+  }
+
+  try {
+    const payment = await readSucceededPayment(paymentId);
+    await dbService.setSubscriptionTier(payment.userId, payment.tier);
+    console.log(
+      `Оплата прошла: пользователь ${payment.userId}, тариф ${payment.tier}.`,
+    );
+    sendJson(res, 200, { status: "ok" });
+  } catch (error) {
+    console.error(
+      "Не удалось записать оплаченный тариф:",
+      error instanceof Error ? error.message : error,
+    );
+    if (error instanceof PaymentServiceError) {
+      sendJson(res, error.statusCode, { status: "error", message: error.message });
+      return;
+    }
+    const message =
+      error instanceof DbServiceError
+        ? error.message
+        : "Не удалось обновить тариф после оплаты.";
+    sendJson(res, 503, { status: "error", message });
+  }
+});
+
 app.post("/api/generate-list", requireUser, async (req, res) => {
   const parsed = parsePackRequest(req.body);
   if (!parsed.ok) {
@@ -66,12 +159,11 @@ app.post("/api/generate-list", requireUser, async (req, res) => {
   const userId = String(res.locals.userId);
 
   try {
-    const allowed = await dbService.checkUserLimit(userId);
-    if (!allowed) {
+    const limit = await dbService.checkUserLimit(userId);
+    if (!limit.allowed) {
       sendJson(res, 403, {
         status: "error",
-        message:
-          "Вы исчерпали бесплатные лимиты на эту неделю. Перейдите на Premium!",
+        message: limitMessage(limit.tier),
       });
       return;
     }
@@ -178,6 +270,13 @@ app.post("/api/build-pack", requireUser, async (req, res) => {
   }
 
   const userId = String(res.locals.userId);
+  if (parsed.build.mods.length > 40) {
+    sendJson(res, 400, {
+      status: "error",
+      message: "Максимальный размер сборки — 40 модов!",
+    });
+    return;
+  }
 
   let loaderBuild: string;
   try {
@@ -494,6 +593,27 @@ async function requireUser(
   } catch (error) {
     next(error);
   }
+}
+
+function limitMessage(tier: SubscriptionTier): string {
+  if (tier === "free") {
+    return "Вы исчерпали бесплатные лимиты на эту неделю. Перейдите на Premium!";
+  }
+  return "Лимит генераций на эту неделю закончился. Откройте магазин и выберите тариф выше.";
+}
+
+function paymentReturnUrl(req: Request): string {
+  const origin = req.get("origin")?.trim() ?? "";
+  if (/^https?:\/\/\S+$/i.test(origin) && origin.length < 1800) {
+    return `${origin.replace(/\/$/, "")}/?shop=paid`;
+  }
+
+  const configured = process.env.FRONTEND_URL?.trim() ?? "";
+  if (/^https?:\/\/\S+$/i.test(configured)) {
+    return configured;
+  }
+
+  return "http://127.0.0.1:5173/?shop=paid";
 }
 
 function sendJson(res: Response, status: number, body: unknown): void {

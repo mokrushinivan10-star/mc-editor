@@ -17,6 +17,18 @@ type StatusResponse = {
 
 type ModLoader = "forge" | "fabric";
 type Step = "input" | "edit";
+type ShopTier = "premium" | "ultra" | "max";
+
+const SHOP_PLANS: Array<{
+  tier: ShopTier;
+  title: string;
+  quota: string;
+  price: string;
+}> = [
+  { tier: "premium", title: "Premium", quota: "15 генераций/неделю", price: "200₽" },
+  { tier: "ultra", title: "Ultra", quota: "30 генераций/неделю", price: "400₽" },
+  { tier: "max", title: "Максимум", quota: "Безлимит генераций", price: "1000₽" },
+];
 
 type GeneratedMod = {
   id: number;
@@ -57,6 +69,10 @@ function App() {
   const [sendingLink, setSendingLink] = useState(false);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [shopOpen, setShopOpen] = useState(false);
+  const [buyingTier, setBuyingTier] = useState<ShopTier | null>(null);
+  const [shopError, setShopError] = useState<string | null>(null);
+  const [shopNote, setShopNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!supabase) {
@@ -82,6 +98,18 @@ function App() {
       active = false;
       data.subscription.unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("shop") !== "paid") {
+      return;
+    }
+    setShopNote("Если оплата прошла, тариф обновится в течение минуты.");
+    setShopOpen(true);
+    params.delete("shop");
+    const next = params.toString();
+    window.history.replaceState({}, "", next ? `?${next}` : window.location.pathname);
   }, []);
 
   useEffect(() => {
@@ -154,6 +182,34 @@ function App() {
     }
   }
 
+  async function buyPlan(tier: ShopTier) {
+    setBuyingTier(tier);
+    setShopError(null);
+
+    try {
+      const response = await fetch(`${API_URL}/api/payments/create`, {
+        method: "POST",
+        headers: authHeaders(session?.access_token),
+        body: JSON.stringify({ tier }),
+      });
+      const data = await readJson<{ confirmationUrl?: string; message?: string }>(
+        response,
+        "Не удалось создать платёж.",
+      );
+      if (!data.confirmationUrl) {
+        throw new Error("ЮKassa не вернула ссылку на оплату.");
+      }
+      window.location.assign(data.confirmationUrl);
+    } catch (paymentError) {
+      setShopError(
+        paymentError instanceof Error
+          ? paymentError.message
+          : "Не удалось создать платёж.",
+      );
+      setBuyingTier(null);
+    }
+  }
+
   async function generateList(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setGenerating(true);
@@ -197,6 +253,10 @@ function App() {
 
   async function requestExtraMod(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (generatedMods.length >= 40) {
+      setBuildError("Максимальный размер сборки — 40 модов!");
+      return;
+    }
     setSuggesting(true);
     setBuildError(null);
 
@@ -241,6 +301,10 @@ function App() {
   }
 
   async function downloadPack() {
+    if (generatedMods.length > 40) {
+      setBuildError("Максимальный размер сборки — 40 модов!");
+      return;
+    }
     setBuilding(true);
     setBuildError(null);
     setBuildMessage(null);
@@ -313,6 +377,22 @@ function App() {
             ) : null}
           </p>
         )}
+
+        <div className="mt-5 flex justify-center">
+          <button
+            className="border-4 border-t-[#F5E6B8] border-r-[#8A7040] border-b-[#6E5828] border-l-[#E7D7A1] bg-[#3F3A2A] px-4 py-3 font-pixel text-sm text-[#D6B56A] hover:text-[#F5E6B8]"
+            type="button"
+            onClick={() => {
+              setShopError(null);
+              setShopOpen(true);
+            }}
+          >
+            💎 Магазин подписок
+          </button>
+        </div>
+        {shopNote ? (
+          <p className="mt-4 text-center text-sm text-[#8FB58A]">{shopNote}</p>
+        ) : null}
 
         {session ? (
           <div className="mt-4 flex items-center justify-between gap-3 text-sm">
@@ -425,7 +505,7 @@ function App() {
         ) : (
           <div className="mt-8">
             <p className="text-center text-sm text-zinc-400">
-              Модов в сборке: {generatedMods.length}. Уберите лишнее до скачивания.
+              Модов в сборке: {generatedMods.length} из 40. Уберите лишнее до скачивания.
               {loaderVersion
                 ? ` Загрузчик для ${gameVersion}: ${modLoader === "forge" ? "Forge" : "Fabric"} ${loaderVersion}.`
                 : ""}
@@ -512,8 +592,64 @@ function App() {
           </p>
         ) : null}
       </section>
+      {shopOpen ? <ShopModal /> : null}
     </main>
   );
+
+  function ShopModal() {
+    return (
+      <div
+        className="fixed inset-0 z-20 flex items-center justify-center bg-black/75 px-4 py-8"
+        onClick={() => setShopOpen(false)}
+      >
+        <div
+          className="w-full max-w-4xl border-4 border-t-zinc-500 border-r-zinc-900 border-b-zinc-950 border-l-zinc-600 bg-zinc-800 p-6 sm:p-8"
+          role="dialog"
+          aria-labelledby="shop-title"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <h2 id="shop-title" className="font-pixel text-2xl text-[#D6B56A]">
+              💎 Магазин подписок
+            </h2>
+            <button
+              className="border-4 border-t-zinc-400 border-r-zinc-600 border-b-zinc-700 border-l-zinc-500 bg-zinc-700 px-3 py-2 text-sm text-zinc-100 hover:border-red-400 hover:text-[#FF5555]"
+              type="button"
+              onClick={() => setShopOpen(false)}
+            >
+              Закрыть
+            </button>
+          </div>
+          <p className="mt-3 text-sm text-zinc-400">
+            Бесплатно — 3 генерации в неделю. Оплата открывает тариф сразу после подтверждения ЮKassa.
+          </p>
+          <div className="mt-6 grid gap-4 md:grid-cols-3">
+            {SHOP_PLANS.map((plan) => (
+              <article
+                key={plan.tier}
+                className="flex flex-col border-4 border-t-zinc-600 border-r-zinc-950 border-b-black border-l-zinc-700 bg-black p-4"
+              >
+                <h3 className="font-pixel text-lg text-[#8FB58A]">{plan.title}</h3>
+                <p className="mt-4 font-pixel text-3xl text-[#D6B56A]">{plan.price}</p>
+                <p className="mt-3 flex-1 text-sm text-zinc-300">{plan.quota}</p>
+                <button
+                  className={`${buttonClass} mt-5`}
+                  type="button"
+                  onClick={() => void buyPlan(plan.tier)}
+                  disabled={buyingTier !== null}
+                >
+                  {buyingTier === plan.tier ? "Открываю оплату..." : "Купить"}
+                </button>
+              </article>
+            ))}
+          </div>
+          {shopError ? (
+            <p className="mt-5 text-center text-sm text-[#FF5555]">{shopError}</p>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 }
 
 function authHeaders(accessToken: string | undefined): HeadersInit {
