@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { PageFrame } from "./ads";
 
 export type PlanId = "premium" | "ultra" | "max";
 
@@ -167,7 +168,7 @@ export function LegalScreen(props: { kind: LegalKind }) {
   }, [props.kind]);
 
   return (
-    <main className="flex min-h-screen flex-col items-center bg-zinc-900 bg-[linear-gradient(rgba(0,0,0,0.35)_2px,transparent_2px),linear-gradient(90deg,rgba(0,0,0,0.35)_2px,transparent_2px)] bg-size-[32px_32px] px-4 py-12 text-zinc-200">
+    <PageFrame>
       <article className="w-full max-w-3xl border-4 border-t-zinc-500 border-r-zinc-900 border-b-zinc-950 border-l-zinc-600 bg-zinc-800 p-6 sm:p-10">
         <a className={`${linkClass} text-sm`} href="/">На главную</a>
         <h1 className="mt-4 font-pixel text-2xl leading-relaxed text-[#D6B56A] sm:text-3xl">
@@ -181,7 +182,7 @@ export function LegalScreen(props: { kind: LegalKind }) {
         </div>
       </article>
       <SiteFooter />
-    </main>
+    </PageFrame>
   );
 }
 

@@ -603,18 +603,16 @@ function limitMessage(tier: SubscriptionTier): string {
   return "Лимит генераций на эту неделю закончился. Откройте магазин и выберите тариф выше.";
 }
 
+const SITE_URL = "https://mellifluous-trifle-34d306.netlify.app";
+
 function paymentReturnUrl(req: Request): string {
   const origin = req.get("origin")?.trim() ?? "";
   if (/^https?:\/\/\S+$/i.test(origin) && origin.length < 1800) {
     return `${origin.replace(/\/$/, "")}/?shop=paid`;
   }
 
-  const configured = process.env.FRONTEND_URL?.trim() ?? "";
-  if (/^https?:\/\/\S+$/i.test(configured)) {
-    return configured;
-  }
-
-  return "http://127.0.0.1:5173/?shop=paid";
+  const configured = process.env.FRONTEND_URL?.trim() || SITE_URL;
+  return `${configured.replace(/\/$/, "")}/?shop=paid`;
 }
 
 function sendJson(res: Response, status: number, body: unknown): void {

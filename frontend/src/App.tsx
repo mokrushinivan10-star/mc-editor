@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
+import { PageFrame } from "./ads";
 import { PlanCatalog, SiteFooter, type PlanId } from "./legal";
 import { supabase } from "./supabaseClient";
 
@@ -344,7 +345,7 @@ function App() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center bg-zinc-900 bg-[linear-gradient(rgba(0,0,0,0.35)_2px,transparent_2px),linear-gradient(90deg,rgba(0,0,0,0.35)_2px,transparent_2px)] bg-size-[32px_32px] px-4 py-12 text-zinc-200">
+    <PageFrame>
       <section className="w-full max-w-2xl border-4 border-t-zinc-500 border-r-zinc-900 border-b-zinc-950 border-l-zinc-600 bg-zinc-800 p-8 sm:p-10">
         <p className="text-center font-pixel text-sm tracking-wide text-[#D6B56A]">
           AI Minecraft Modpack Generator
@@ -593,7 +594,7 @@ function App() {
         onBuy={(tier) => void buyPlan(tier)}
       />
       <SiteFooter />
-    </main>
+    </PageFrame>
   );
 
   function FormatField() {
